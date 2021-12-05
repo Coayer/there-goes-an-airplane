@@ -14,9 +14,9 @@ import (
 )
 
 // data obtained from openflights.org
-var icaoAirlines = mapRecords(loadCsv("data/icaoAirlines.csv"))
+var icaoAirlines = mapRecords(loadCsv("data/airlines.csv"))
 var icaoTypes = mapRecords(loadCsv("data/planes.csv"))
-var iataAirports = mapRecords(loadCsv("data/planes.csv"))
+var iataAirports = mapRecords(loadCsv("data/airports.csv"))
 var fr24idCookie = getCookie()
 
 type flightData struct {
@@ -31,6 +31,7 @@ type flightData struct {
 
 func main() {
 	http.HandleFunc("/", handler)
+	log.Println("Server started")
 	log.Fatal(http.ListenAndServe(":2107", nil))
 }
 
@@ -51,7 +52,7 @@ func handler(w http.ResponseWriter, request *http.Request) {
 		log.Println("GET received")
 
 		longitude, err := strconv.ParseFloat(request.URL.Query().Get("longitude"), 64)
-		latitude, err := strconv.ParseFloat(request.URL.Query().Get("longitude"), 64)
+		latitude, err := strconv.ParseFloat(request.URL.Query().Get("latitude"), 64)
 		altitude, err := strconv.ParseFloat(request.URL.Query().Get("altitude"), 64)
 
 		response := formatFlight(getClosestPlane(longitude, latitude, altitude))
@@ -98,7 +99,7 @@ func getFlights(longitude float64, latitude float64) []flightData {
 	const latitudeDelta = 0.2
 	longitudeDelta := latitudeDelta * math.Cos(latitude)
 
-	url := fmt.Sprintf("https://data-live.flightradar24.com/zones/fcgi/feed.js?faa=1&bounds=%f, %f, %f, %f"+
+	url := fmt.Sprintf("https://data-live.flightradar24.com/zones/fcgi/feed.js?faa=1&bounds=%f,%f,%f,%f"+
 		"&satellite=1&mlat=1&flarm=1&adsb=1&gnd=0&air=1&vehicles=0&estimated=1&maxage=14400&gliders=0&stats=0",
 		latitude+latitudeDelta, latitude-latitudeDelta, longitude-longitudeDelta, longitude+longitudeDelta)
 
@@ -137,11 +138,11 @@ func parseFlightsJSON(bytes []byte) []flightData {
 
 	var flights []flightData
 	for _, planeData := range flightsData {
-		status := planeData.([19]interface{})
+		status := planeData.([]interface{})
 		var plane flightData
 		plane.latitude = status[1].(float64)
 		plane.longitude = status[2].(float64)
-		plane.altitude = status[4].(int)
+		plane.altitude = int(status[4].(float64))
 		plane.icaoType = status[8].(string)
 		plane.iataDeparting = status[11].(string)
 		plane.iataArriving = status[12].(string)
