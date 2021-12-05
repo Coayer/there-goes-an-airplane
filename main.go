@@ -1,32 +1,45 @@
 package main
 
 import (
-	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"math"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 )
 
-// data obtained from openflights.org
-var icaoAirlines = mapRecords(loadCsv("data/airlines.csv"))
-var icaoTypes = mapRecords(loadCsv("data/planes.csv"))
-var iataAirports = mapRecords(loadCsv("data/airports.csv"))
 var fr24idCookie = getCookie()
 
-type flightData struct {
-	icaoType      string
-	icaoAirline   string
-	iataDeparting string
-	iataArriving  string
-	longitude     float64
-	latitude      float64
-	altitude      int
+type flightPosition struct {
+	fr24id    string
+	longitude float64
+	latitude  float64
+	altitude  int
+}
+
+type FlightDetailsJSON struct {
+	Aircraft struct {
+		Model struct {
+			Text string
+		}
+	}
+
+	Airline struct {
+		Name string
+	}
+
+	Airport struct {
+		Origin struct {
+			Name string
+		}
+
+		Destination struct {
+			Name string
+		}
+	}
 }
 
 func main() {
@@ -42,8 +55,10 @@ func getCookie() string {
 	}
 
 	cookies := resp.Header.Values("set-cookie")
+	id := strings.Split(cookies[0], ";")[0]
 
-	return strings.Split(cookies[0], ";")[0]
+	log.Println("Cookie set to " + id)
+	return id
 }
 
 func handler(w http.ResponseWriter, request *http.Request) {
@@ -55,31 +70,56 @@ func handler(w http.ResponseWriter, request *http.Request) {
 		latitude, err := strconv.ParseFloat(request.URL.Query().Get("latitude"), 64)
 		altitude, err := strconv.ParseFloat(request.URL.Query().Get("altitude"), 64)
 
-		response := formatFlight(getClosestPlane(longitude, latitude, altitude))
+		response := formatFlight(getClosestFlight(longitude, latitude, altitude).fr24id)
 
 		_, err = fmt.Fprint(w, response)
 		if err != nil {
 			log.Println(err)
 		}
+
+		log.Println(response)
 	default:
 		http.Error(w, "Incorrect method", http.StatusMethodNotAllowed)
 	}
 }
 
-func formatFlight(flight flightData) string {
-	airline := icaoAirlines[flight.icaoAirline]
-	aircraft := icaoTypes[flight.icaoType]
-	departing := iataAirports[flight.iataDeparting]
-	arriving := iataAirports[flight.iataArriving]
+func formatFlight(flight string) string {
+	airline, aircraft, origin, destination := getFlightDetails(flight)
 
-	return fmt.Sprintf("%s %s from %s to %s", airline, aircraft, departing, arriving)
+	if origin != "" {
+		origin = "from " + origin
+	}
+
+	if destination != "" {
+		destination = "to " + destination
+	}
+
+	return fmt.Sprintf("%s %s %s %s", airline, aircraft, origin, destination)
 }
 
-func getClosestPlane(longitude float64, latitude float64, altitude float64) flightData {
+func getFlightDetails(fr24id string) (string, string, string, string) {
+	url := "https://data-live.flightradar24.com/clickhandler/?flight=" + fr24id
+
+	body := httpGet(url)
+	details := parseFlightDetailsJSON(body)
+	return details.Airline.Name, details.Aircraft.Model.Text, details.Airport.Origin.Name, details.Airport.Destination.Name
+}
+
+func parseFlightDetailsJSON(bytes []byte) FlightDetailsJSON {
+	var response FlightDetailsJSON
+
+	if err := json.Unmarshal(bytes, &response); err != nil {
+		log.Println(err)
+	}
+
+	return response
+}
+
+func getClosestFlight(longitude float64, latitude float64, altitude float64) flightPosition {
 	x, y, z := pointToCartesian(longitude, latitude, feetToMeters(altitude))
 
 	minDistance := math.Inf(1)
-	closestPlane := flightData{}
+	closestPlane := flightPosition{}
 
 	flights := getFlights(longitude, latitude)
 
@@ -95,7 +135,7 @@ func getClosestPlane(longitude float64, latitude float64, altitude float64) flig
 	return closestPlane
 }
 
-func getFlights(longitude float64, latitude float64) []flightData {
+func getFlights(longitude float64, latitude float64) []flightPosition {
 	const latitudeDelta = 0.2
 	longitudeDelta := latitudeDelta * math.Cos(latitude)
 
@@ -103,6 +143,11 @@ func getFlights(longitude float64, latitude float64) []flightData {
 		"&satellite=1&mlat=1&flarm=1&adsb=1&gnd=0&air=1&vehicles=0&estimated=1&maxage=14400&gliders=0&stats=0",
 		latitude+latitudeDelta, latitude-latitudeDelta, longitude-longitudeDelta, longitude+longitudeDelta)
 
+	body := httpGet(url)
+	return parseFlightsJSON(body)
+}
+
+func httpGet(url string) []byte {
 	client := &http.Client{}
 
 	req, err := http.NewRequest("GET", url, nil)
@@ -123,10 +168,10 @@ func getFlights(longitude float64, latitude float64) []flightData {
 		log.Fatal(err)
 	}
 
-	return parseFlightsJSON(body)
+	return body
 }
 
-func parseFlightsJSON(bytes []byte) []flightData {
+func parseFlightsJSON(bytes []byte) []flightPosition {
 	var response interface{}
 	if err := json.Unmarshal(bytes, &response); err != nil {
 		log.Println(err)
@@ -136,17 +181,14 @@ func parseFlightsJSON(bytes []byte) []flightData {
 	delete(flightsData, "full_count")
 	delete(flightsData, "version")
 
-	var flights []flightData
-	for _, planeData := range flightsData {
+	var flights []flightPosition
+	for fr24id, planeData := range flightsData {
 		status := planeData.([]interface{})
-		var plane flightData
+		var plane flightPosition
+		plane.fr24id = fr24id
 		plane.latitude = status[1].(float64)
 		plane.longitude = status[2].(float64)
 		plane.altitude = int(status[4].(float64))
-		plane.icaoType = status[8].(string)
-		plane.iataDeparting = status[11].(string)
-		plane.iataArriving = status[12].(string)
-		plane.icaoAirline = status[18].(string)
 		flights = append(flights, plane)
 	}
 
@@ -173,32 +215,4 @@ func pointToCartesian(longitude float64, latitude float64, altitude float64) (fl
 	z := (0.9933056200098024*N(latitude) + altitude) * math.Sin(latitude)
 
 	return x, y, z
-}
-
-func loadCsv(path string) [][]string {
-	log.Println("Loading " + path)
-
-	file, err := os.Open(path)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
-
-	csvReader := csv.NewReader(file)
-	records, err := csvReader.ReadAll()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return records
-}
-
-func mapRecords(records [][]string) map[string]string {
-	hashTable := make(map[string]string)
-
-	for _, line := range records {
-		hashTable[line[0]] = line[1]
-	}
-
-	return hashTable
 }
