@@ -51,7 +51,7 @@ func main() {
 func getCookie() string {
 	resp, err := http.Get("https://www.flightradar24.com")
 	if err != nil {
-		log.Fatal("Couldn't fetch cookie")
+		log.Fatal(err)
 	}
 
 	cookies := resp.Header.Values("set-cookie")
@@ -64,20 +64,23 @@ func getCookie() string {
 func handler(w http.ResponseWriter, request *http.Request) {
 	switch request.Method {
 	case http.MethodGet:
-		log.Println("GET received")
+		log.Println("GET received from " + request.UserAgent())
 
 		longitude, err := strconv.ParseFloat(request.URL.Query().Get("longitude"), 64)
 		latitude, err := strconv.ParseFloat(request.URL.Query().Get("latitude"), 64)
 		altitude, err := strconv.ParseFloat(request.URL.Query().Get("altitude"), 64)
 
 		response := formatFlight(getClosestFlight(longitude, latitude, altitude).fr24id)
+		if response == "   " {
+			response = "No planes found"
+		}
 
 		_, err = fmt.Fprint(w, response)
 		if err != nil {
 			log.Println(err)
+		} else {
+			log.Println(response)
 		}
-
-		log.Println(response)
 	default:
 		http.Error(w, "Incorrect method", http.StatusMethodNotAllowed)
 	}
@@ -136,7 +139,7 @@ func getClosestFlight(longitude float64, latitude float64, altitude float64) fli
 }
 
 func getFlights(longitude float64, latitude float64) []flightPosition {
-	const latitudeDelta = 0.2
+	const latitudeDelta = 0.5
 	longitudeDelta := latitudeDelta * math.Cos(latitude)
 
 	url := fmt.Sprintf("https://data-live.flightradar24.com/zones/fcgi/feed.js?faa=1&bounds=%f,%f,%f,%f"+
