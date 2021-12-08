@@ -72,7 +72,7 @@ func handler(w http.ResponseWriter, request *http.Request) {
 
 		response := formatFlight(getClosestFlight(longitude, latitude, altitude).fr24id)
 		if response == "   " {
-			response = "No planes found"
+			response = "No aircraft found nearby"
 		}
 
 		_, err = fmt.Fprint(w, response)

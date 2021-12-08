@@ -1,0 +1,1 @@
+Docker/podman run command: `docker run -d -p 2107:2107 ghcr.io/coayer/there-goes-an-airplane:master`
