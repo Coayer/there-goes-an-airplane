@@ -44,6 +44,8 @@ type FlightDetailsJSON struct {
 
 func main() {
 	http.HandleFunc("/", handler)
+	http.HandleFunc("/health", healthCheckHandler)
+
 	log.Println("Server started")
 	log.Fatal(http.ListenAndServe(":2107", nil))
 }
@@ -61,28 +63,43 @@ func getCookie() string {
 	return id
 }
 
+func healthCheckHandler(w http.ResponseWriter, request *http.Request) {
+	_, _ = fmt.Fprint(w, "Neeeoowww\n")
+}
+
 func handler(w http.ResponseWriter, request *http.Request) {
-	switch request.Method {
-	case http.MethodGet:
-		log.Println("GET received from " + request.UserAgent())
+	log.Printf("GET received from %s:\n%s", request.UserAgent(), request.URL.RawPath)
 
-		longitude, err := strconv.ParseFloat(request.URL.Query().Get("longitude"), 64)
-		latitude, err := strconv.ParseFloat(request.URL.Query().Get("latitude"), 64)
-		altitude, err := strconv.ParseFloat(request.URL.Query().Get("altitude"), 64)
+	longitude, err := strconv.ParseFloat(request.URL.Query().Get("longitude"), 64)
 
-		response := formatFlight(getClosestFlight(longitude, latitude, altitude).fr24id)
-		if response == "   " {
-			response = "No aircraft found nearby"
-		}
+	if err != nil {
+		http.Error(w, "Missing longitude parameter", 422)
+		return
+	}
 
-		_, err = fmt.Fprint(w, response)
-		if err != nil {
-			log.Println(err)
-		} else {
-			log.Println(response)
-		}
-	default:
-		http.Error(w, "Incorrect method", http.StatusMethodNotAllowed)
+	latitude, err := strconv.ParseFloat(request.URL.Query().Get("latitude"), 64)
+
+	if err != nil {
+		http.Error(w, "Missing latitude parameter", 422)
+		return
+	}
+
+	altitude, err := strconv.ParseFloat(request.URL.Query().Get("altitude"), 64)
+
+	if err != nil {
+		altitude = 0
+	}
+
+	response := formatFlight(getClosestFlight(longitude, latitude, altitude).fr24id)
+	if response == "   \n" {
+		response = "No aircraft found nearby\n"
+	}
+
+	_, err = fmt.Fprint(w, response)
+	if err != nil {
+		log.Println(err)
+	} else {
+		log.Println(response)
 	}
 }
 
@@ -97,7 +114,7 @@ func formatFlight(flight string) string {
 		destination = "to " + destination
 	}
 
-	return fmt.Sprintf("%s %s %s %s", airline, aircraft, origin, destination)
+	return fmt.Sprintf("%s %s %s %s\n", airline, aircraft, origin, destination)
 }
 
 func getFlightDetails(fr24id string) (string, string, string, string) {
